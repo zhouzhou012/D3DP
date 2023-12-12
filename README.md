@@ -1,4 +1,3 @@
-# Diffusion-Based 3D Human Pose Estimation with Multi-Hypothesis Aggregation [ICCV2023]
 This experiment compared data augmentation schemes in D3DP, including diffusion-flipping, flipping once, and no flipping.
 
 ## Dependencies
