@@ -1,5 +1,5 @@
 ## Introduction
-This experiment compared data augmentation schemes in D3DP, including diffusion-flipping, flipping once, and no flipping.
+This experiment compares data augmentation schemes in D3DP, including diffusion-flipping, flipping once, and no flipping.
 
 ## Dependencies
 Refer to the requirement file.
