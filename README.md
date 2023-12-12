@@ -41,6 +41,3 @@ To train model using the 2D keypoints obtained by CPN as inputs, please run:
 ```bash
 python main.py -k cpn_ft_h36m_dbb -c checkpoint/model_h36m -gpu 0 --nolog
 ```
-
-
-```
