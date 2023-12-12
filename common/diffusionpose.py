@@ -145,6 +145,7 @@ class D3DP(nn.Module):
 
         return ModelPrediction(pred_noise, x_start)
 
+    # 扩散翻转
     def model_predictions_fliping(self, x, inputs_2d, inputs_2d_flip, t):
         x_t = torch.clamp(x, min=-1.1 * self.scale, max=1.1*self.scale)
         x_t = x_t / self.scale
