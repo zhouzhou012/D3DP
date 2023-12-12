@@ -5,7 +5,7 @@
 # Contact: {sunpeize, cxrfzhang}@foxmail.com
 #
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-#hhh
+
 import math
 import random
 from typing import List
@@ -133,6 +133,7 @@ class D3DP(nn.Module):
                 extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
         )
 
+    # 不翻转
     def model_predictions(self, x, inputs_2d, t):
         x_t = torch.clamp(x, min=-1.1 * self.scale, max=1.1*self.scale)
         x_t = x_t / self.scale
@@ -144,6 +145,25 @@ class D3DP(nn.Module):
         pred_noise = self.predict_noise_from_start(x, t, x_start)
 
         return ModelPrediction(pred_noise, x_start)
+
+    # 翻转去噪
+    def model_predictions_flip_once(self, x, inputs_2d, t):
+        x_t = torch.clamp(x, min=-1.1 * self.scale, max=1.1*self.scale)
+        x_t = x_t / self.scale
+        x_t_flip = x_t.clone()
+        x_t_flip[:, :, :, :, 0] *= -1
+        x_t_flip[:, :, :, self.joints_left + self.joints_right] = x_t_flip[:, :, :,
+                                                                  self.joints_right + self.joints_left]
+
+        pred_pose_flip = self.pose_estimator(inputs_2d_flip, x_t_flip, t)
+        pred_pose_flip[:, :, :, :, 0] *= -1
+        pred_pose_flip[:, :, :, self.joints_left + self.joints_right] = pred_pose_flip[:, :, :,
+                                                                        self.joints_right + self.joints_left]
+
+        x_start = pred_pose_flip
+        x_start = x_start * self.scale
+        x_start = torch.clamp(x_start, min=-1.1 * self.scale, max=1.1*self.scale)
+        pred_noise = self.predict_noise_from_start(x, t, x_start)
 
     # 扩散翻转
     def model_predictions_fliping(self, x, inputs_2d, inputs_2d_flip, t):
@@ -171,6 +191,7 @@ class D3DP(nn.Module):
         return ModelPrediction(pred_noise, x_start)
 
     @torch.no_grad()
+    # 不翻转
     def ddim_sample(self, inputs_2d, inputs_3d, clip_denoised=True, do_postprocess=True):
         batch = inputs_2d.shape[0]
         shape = (batch, self.num_proposals, self.frames, 17, 3)
@@ -213,7 +234,59 @@ class D3DP(nn.Module):
 
         return preds_all
 
+      # 一次翻转
+      def ddim_sample_flip_once(self, inputs_2d, inputs_3d, clip_denoised=True, do_postprocess=True, input_2d_flip=None):
+        batch = inputs_2d.shape[0]
+        shape = (batch, self.num_proposals, self.frames, 17, 3)
+        total_timesteps, sampling_timesteps, eta, objective = self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
+
+        # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
+        times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)
+        times = list(reversed(times.int().tolist()))
+        time_pairs = list(zip(times[:-1], times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
+
+        img = torch.randn(shape, device='cuda')
+
+        x_start = None
+        preds_all = []
+        for time, time_next in time_pairs:
+            time_cond = torch.full((batch,), time, dtype=torch.long).cuda()
+            # self_cond = x_start if self.self_condition else None
+
+            # print("%d/%d" % (time, total_timesteps))
+
+            preds = self.model_predictions(img, inputs_2d, time_cond)
+            preds_flip = self.model_predictions_fliping(img, inputs_2d, input_2d_flip, time_cond)
+            pred_noise, x_start = preds.pred_noise, preds.pred_x_start
+            pred_noise_flip, x_start_flip = preds_flip.pred_noise, preds_flip.pred_x_start
+
+            pred_pose = (x_start + x_start_flip) / 2
+
+            x_start = pred_pose
+
+            preds_all.append(x_start)
+
+            if time_next < 0:
+                img = x_start
+                continue
+
+            alpha = self.alphas_cumprod[time]
+            alpha_next = self.alphas_cumprod[time_next]
+
+            sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+            c = (1 - alpha_next - sigma ** 2).sqrt()
+
+            noise = torch.randn_like(img)
+
+            img = x_start * alpha_next.sqrt() + \
+                  c * pred_noise + \
+                  sigma * noise
+
+        return torch.stack(preds_all, dim=1)
+
+
     @torch.no_grad()
+    # 扩散翻转
     def ddim_sample_flip(self, inputs_2d, inputs_3d, clip_denoised=True, do_postprocess=True, input_2d_flip=None):
         batch = inputs_2d.shape[0]
         shape = (batch, self.num_proposals, self.frames, 17, 3)
@@ -274,6 +347,7 @@ class D3DP(nn.Module):
         if not self.is_train:
             if self.flip:
                 results = self.ddim_sample_flip(input_2d, input_3d, input_2d_flip=input_2d_flip)
+                # results = self.ddim_sample_flip_once(input_2d, input_3d, input_2d_flip=input_2d_flip)
             else:
                 results = self.ddim_sample(input_2d, input_3d)
             return results
